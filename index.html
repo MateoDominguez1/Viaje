@@ -141,7 +141,13 @@ textarea { resize: vertical; min-height: 70px; }
 
 .demo-note {
   margin: 0; padding: 12px 16px; border: 2px dashed var(--line); border-radius: var(--r-sm); font-size: 15px;
+  display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between;
 }
+.demo-note span { flex: 1 1 320px; min-width: 0; }
+.empty-state { grid-column: 1 / -1; padding: 36px 20px; text-align: center; border: 2px dashed var(--line); border-radius: var(--r); display: flex; flex-direction: column; align-items: center; gap: 14px; }
+.empty-state h3 { font-size: 26px; }
+.empty-state p { margin: 0; color: var(--ink-soft); }
+.empty-state .row { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
 
 /* Griglia dei viaggi */
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 26px; align-items: start; }
@@ -178,6 +184,7 @@ textarea { resize: vertical; min-height: 70px; }
 
 /* Fogli modali */
 .overlay { position: fixed; inset: 0; z-index: 20; background: color-mix(in srgb, var(--paper) 55%, transparent); backdrop-filter: blur(2px); display: flex; justify-content: center; align-items: flex-start; overflow-y: auto; padding: max(18px, env(safe-area-inset-top, 0px)) 16px 40px; }
+#ov-trip, #ov-del, #ov-login { z-index: 30; }
 .sheet {
   width: 100%; max-width: 640px; margin-top: 4vh; background: var(--paper); background-image: var(--grain);
   border: var(--bw) solid var(--line); border-radius: var(--r); box-shadow: 8px 8px 0 var(--shadow);
@@ -204,7 +211,8 @@ textarea { resize: vertical; min-height: 70px; }
 .plan-stats { display: flex; flex-wrap: wrap; gap: 8px; }
 .plan-stats span { font-size: 14px; border: 2px solid var(--line); border-radius: 999px; padding: 4px 11px; background: var(--surface); font-variant-numeric: tabular-nums; }
 .plan-stats b { font-weight: 700; }
-.readonly-note { font-size: 14px; padding: 9px 13px; border: 2px dashed var(--line); border-radius: var(--r-sm); }
+.readonly-note { font-size: 14px; padding: 9px 13px; border: 2px dashed var(--line); border-radius: var(--r-sm); display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; justify-content: space-between; }
+.sheet-head .btn { align-self: center; }
 .tabs { display: flex; gap: 6px; border-bottom: var(--bw) solid var(--line); flex-wrap: wrap; }
 .tab {
   font: 700 15px/1 var(--f-display); color: var(--ink); background: var(--paper-2); cursor: pointer;
@@ -308,7 +316,10 @@ textarea { resize: vertical; min-height: 70px; }
     </label>
   </section>
 
-  <p class="demo-note" id="demo-note" hidden>Questi tre viaggi sono di esempio e non si possono modificare. Apri il piano di Lisbona per vedere un itinerario completo. Spariscono appena aggiungi il primo viaggio.</p>
+  <div class="demo-note" id="demo-note" hidden>
+    <span>Questi sono viaggi di esempio. Apri il piano di Lisbona per vedere un itinerario completo. Se ne modifichi uno, diventa vostro. Quando aggiungete il primo viaggio, gli esempi spariscono.</span>
+    <button class="btn small" type="button" id="hide-examples">Nascondi gli esempi</button>
+  </div>
 
   <section class="grid" id="list" aria-live="polite"></section>
 </div>
@@ -343,10 +354,14 @@ textarea { resize: vertical; min-height: 70px; }
   <div class="sheet wide" role="dialog" aria-modal="true" aria-labelledby="plan-title">
     <div class="sheet-head">
       <div><p class="eyebrow" id="plan-eyebrow"></p><h2 id="plan-title"></h2></div>
+      <button class="btn small" type="button" id="plan-edit">Modifica viaggio</button>
       <button class="x" type="button" data-close aria-label="Chiudi">×</button>
     </div>
     <div class="plan-stats" id="plan-stats"></div>
-    <p class="readonly-note" id="plan-ro" hidden>Viaggio di esempio: puoi guardare tutto, ma non modificarlo.</p>
+    <div class="readonly-note" id="plan-ro" hidden>
+      <span>Viaggio di esempio: per modificarlo, copialo tra i vostri viaggi.</span>
+      <button class="btn small accent" type="button" id="plan-adopt">Copia e modifica</button>
+    </div>
     <div class="tabs" role="tablist" id="plan-tabs">
       <button class="tab" role="tab" type="button" data-tab="stays" id="tab-stays">Dove dormire <span class="c"></span></button>
       <button class="tab" role="tab" type="button" data-tab="places" id="tab-places">Luoghi <span class="c"></span></button>
@@ -407,6 +422,7 @@ textarea { resize: vertical; min-height: 70px; }
   const LS_KEY = "viaggi-chiave";
   const LS_MIGRATED = "viaggi-migrati";
   const LS_SORT = "viaggi-ordine";
+  const LS_HIDDEN = "viaggi-esempi-nascosti";
   const API = "/api/trips";
   const POLL_MS = 20000;
 
@@ -507,6 +523,17 @@ textarea { resize: vertical; min-height: 70px; }
     ];
   }
   const EXAMPLES = makeExamples();
+  const hiddenEx = new Set((() => { try { const a = JSON.parse(lsGet(LS_HIDDEN) || "[]"); return Array.isArray(a) ? a : []; } catch (e) { return []; } })());
+  const saveHidden = () => lsSet(LS_HIDDEN, JSON.stringify([...hiddenEx]));
+  // Copia un esempio come viaggio vero, con id nuovi, così si può modificare e sincronizzare.
+  function adoptCopy(ex) {
+    const c = clone(ex);
+    delete c.example;
+    c.id = newId(); c.created = Date.now();
+    c.stays.forEach((s) => { s.id = newId(); });
+    c.places.forEach((p) => { p.id = newId(); });
+    return c;
+  }
 
   /* ---------- Stato ---------- */
   let trips = [];
@@ -645,8 +672,9 @@ textarea { resize: vertical; min-height: 70px; }
   }
 
   /* ---------- Render principale ---------- */
-  const visible = () => trips.length ? trips : EXAMPLES;
-  const isDemo = () => trips.length === 0;
+  const visible = () => trips.length ? trips : EXAMPLES.filter((t) => !hiddenEx.has(t.id));
+  const isDemo = () => trips.length === 0 && visible().length > 0;
+  const findAny = (id) => trips.find((t) => t.id === id) || EXAMPLES.find((t) => t.id === id);
 
   function render() {
     renderSummary(); renderChips(); renderList();
@@ -716,22 +744,38 @@ textarea { resize: vertical; min-height: 70px; }
       ${t.note ? `<p class="note">${esc(t.note)}</p>` : ""}
       <div class="card-actions">
         <button class="btn small" type="button" data-action="plan" data-id="${esc(t.id)}">Apri piano${nPlaces ? " · " + plural(nPlaces, "luogo", "luoghi") : ""}</button>
-        ${ex ? "" : `<button class="btn small ghost push" type="button" data-action="edit" data-id="${esc(t.id)}">Modifica</button>
-        <button class="btn small ghost" type="button" data-action="delete" data-id="${esc(t.id)}">Elimina</button>`}
+        <button class="btn small push" type="button" data-action="edit" data-id="${esc(t.id)}">Modifica</button>
+        <button class="btn small" type="button" data-action="delete" data-id="${esc(t.id)}">${ex ? "Nascondi" : "Elimina"}</button>
       </div>
     </article>`;
   }
 
   function renderList() {
     let list = visible();
+    if (!list.length) {
+      $("#list").innerHTML = `<div class="empty-state">
+        <h3>Ancora nessun viaggio</h3>
+        <p>Aggiungete il primo: date, budget al giorno e interessi. Il resto si calcola da solo.</p>
+        <div class="row">
+          <button class="btn accent" type="button" data-action="new">+ Nuovo viaggio</button>
+          ${hiddenEx.size ? '<button class="btn" type="button" data-action="show-examples">Mostra gli esempi</button>' : ""}
+        </div>
+      </div>`;
+      return;
+    }
     if (ui.filter) list = list.filter((t) => t.interests.includes(ui.filter));
     $("#list").innerHTML = sorted(list).map(cardHTML).join("") || `<p class="empty-filter">Nessun viaggio con questo interesse.</p>`;
   }
 
   /* ---------- Fogli modali ---------- */
-  function openOv(id) { $(id).hidden = false; document.body.classList.add("locked"); }
+  const ovStack = [];
+  function openOv(id) {
+    const el = $(id); el.hidden = false; document.body.classList.add("locked");
+    const i = ovStack.indexOf(el); if (i >= 0) ovStack.splice(i, 1); ovStack.push(el);
+  }
   function closeOv(el) {
     el.hidden = true;
+    const i = ovStack.indexOf(el); if (i >= 0) ovStack.splice(i, 1);
     if ([...document.querySelectorAll(".overlay")].every((o) => o.hidden)) document.body.classList.remove("locked");
     if (el.id === "ov-plan") { plan.id = null; plan.edit = null; }
   }
@@ -741,7 +785,7 @@ textarea { resize: vertical; min-height: 70px; }
   });
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
-    const open = [...document.querySelectorAll(".overlay")].filter((o) => !o.hidden && o.id !== "ov-login").pop();
+    const open = ovStack.filter((o) => o.id !== "ov-login").pop();
     if (open) closeOv(open);
   });
 
@@ -762,7 +806,7 @@ textarea { resize: vertical; min-height: 70px; }
     if (!s || !e) { el.textContent = "Scegli le date per calcolare i giorni."; return; }
     if (e < s) { el.textContent = "Il ritorno deve essere lo stesso giorno dell'andata o dopo."; return; }
     const d = diffDays(s, e) + 1;
-    const t = editingId ? trips.find((x) => x.id === editingId) : null;
+    const t = editingId ? findAny(editingId) : null;
     const sc = t ? stayCost(t) : 0;
     el.textContent = `${plural(d, "giorno", "giorni")} · ${plural(d - 1, "notte", "notti")} · ${eur(d * pd)} di spese giornaliere` + (sc ? ` + ${eur(sc)} di alloggio = ${eur(d * pd + sc)}` : "");
   }
@@ -771,8 +815,8 @@ textarea { resize: vertical; min-height: 70px; }
 
   function openTripForm(id) {
     editingId = id || null;
-    const t = id ? trips.find((x) => x.id === id) : null;
-    $("#trip-eyebrow").textContent = t ? "Modifica viaggio" : "Nuovo viaggio";
+    const t = id ? findAny(id) : null;
+    $("#trip-eyebrow").textContent = t ? (t.example ? "Esempio · salvandolo diventa vostro" : "Modifica viaggio") : "Nuovo viaggio";
     $("#trip-title").textContent = t ? t.dest : "Dove andiamo?";
     $("#f-dest").value = t ? t.dest : "";
     $("#f-country").value = t ? t.country : "";
@@ -783,7 +827,7 @@ textarea { resize: vertical; min-height: 70px; }
     formInterests.clear(); (t ? t.interests : []).forEach((k) => formInterests.add(k));
     renderFormInterests(); updateCalc();
     $("#f-err").hidden = true;
-    $("#f-submit").textContent = t ? "Salva modifiche" : "Salva viaggio";
+    $("#f-submit").textContent = t ? (t.example ? "Salva come nostro viaggio" : "Salva modifiche") : "Salva viaggio";
     openOv("#ov-trip");
     setTimeout(() => $("#f-dest").focus(), 30);
   }
@@ -796,25 +840,41 @@ textarea { resize: vertical; min-height: 70px; }
     if (en < s) return err("Il ritorno non può essere prima dell'andata.");
     const pd = Number($("#f-perday").value);
     if ($("#f-perday").value && (isNaN(pd) || pd < 0)) return err("Il budget al giorno deve essere un numero positivo.");
-    const base = editingId ? clone(trips.find((x) => x.id === editingId)) : { id: newId(), stays: [], places: [], created: Date.now() };
+    const src = editingId ? findAny(editingId) : null;
+    const base = src ? (src.example ? adoptCopy(src) : clone(src)) : { id: newId(), stays: [], places: [], created: Date.now() };
     Object.assign(base, { dest, country: $("#f-country").value.trim(), start: s, end: en, perDay: pd || 0, interests: INTERESTS.map(([k]) => k).filter((k) => formInterests.has(k)), note: $("#f-note").value.trim() });
     saveTrip(base);
+    if (src && src.example && plan.id === src.id) plan.id = base.id;
     closeOv($("#ov-trip"));
-    toast(editingId ? "Viaggio aggiornato" : "Viaggio salvato");
+    if (!$("#ov-plan").hidden) renderPlanFull();
+    toast(src ? (src.example ? "Salvato tra i vostri viaggi" : "Viaggio aggiornato") : "Viaggio salvato");
   });
 
   /* ---------- Eliminazione ---------- */
   let deletingId = null;
   function askDelete(id) {
-    const t = trips.find((x) => x.id === id); if (!t) return;
+    const t = findAny(id); if (!t) return;
     deletingId = id;
-    $("#del-text").textContent = `Si elimina ${t.dest} con tutto il suo piano: ${plural(t.stays.length, "alloggio", "alloggi")} e ${plural(t.places.length, "luogo", "luoghi")}. Non si può annullare.`;
+    if (t.example) {
+      $("#del-title").textContent = "Nascondere questo esempio?";
+      $("#del-text").textContent = `L'esempio di ${t.dest} non comparirà più su questo dispositivo. Potete farlo ricomparire finché non avete viaggi vostri.`;
+      $("#del-ok").textContent = "Sì, nascondi";
+    } else {
+      $("#del-title").textContent = "Eliminare questo viaggio?";
+      $("#del-text").textContent = `Si elimina ${t.dest} con tutto il suo piano: ${plural(t.stays.length, "alloggio", "alloggi")} e ${plural(t.places.length, "luogo", "luoghi")}. Si elimina anche per l'altra persona e non si può annullare.`;
+      $("#del-ok").textContent = "Sì, elimina";
+    }
     openOv("#ov-del");
     setTimeout(() => $("#del-ok").focus(), 30);
   }
   $("#del-ok").addEventListener("click", () => {
-    if (deletingId) { const t = trips.find((x) => x.id === deletingId); deleteTrip(deletingId); toast(t ? `Eliminato: ${t.dest}` : "Viaggio eliminato"); }
+    const t = deletingId ? findAny(deletingId) : null;
+    if (t && t.example) { hiddenEx.add(t.id); saveHidden(); render(); toast(`Esempio nascosto: ${t.dest}`); }
+    else if (t) { deleteTrip(t.id); toast(`Eliminato: ${t.dest}`); }
     deletingId = null; closeOv($("#ov-del"));
+  });
+  $("#hide-examples").addEventListener("click", () => {
+    EXAMPLES.forEach((t) => hiddenEx.add(t.id)); saveHidden(); render(); toast("Esempi nascosti");
   });
 
   /* ---------- Piano ---------- */
@@ -919,6 +979,7 @@ textarea { resize: vertical; min-height: 70px; }
     $("#plan-eyebrow").textContent = `${t.country ? t.country + " · " : ""}${fmtShort(t.start)} → ${fmtShort(t.end)}`;
     $("#plan-title").textContent = t.dest;
     $("#plan-ro").hidden = !ro;
+    $("#plan-edit").hidden = ro;
     const visited = t.places.filter((p) => p.visited).length;
     $("#plan-stats").innerHTML = `<span><b>${plural(tripDays(t), "giorno", "giorni")}</b></span>
       <span>Alloggio <b>${eur(stayCost(t))}</b></span>
@@ -1014,6 +1075,16 @@ textarea { resize: vertical; min-height: 70px; }
       </section>`;
   }
 
+  $("#plan-edit").addEventListener("click", () => { if (plan.id) openTripForm(plan.id); });
+  $("#plan-adopt").addEventListener("click", () => {
+    const ex = planTrip(); if (!ex || !ex.example) return;
+    const c = adoptCopy(ex);
+    saveTrip(c);
+    plan.id = c.id; plan.edit = null;
+    if (plan.tab === "itin") plan.tab = "places";
+    renderPlanFull();
+    toast(`${c.dest} ora è tra i vostri viaggi`);
+  });
   $("#plan-tabs").addEventListener("click", (e) => {
     const b = e.target.closest("[data-tab]"); if (!b) return;
     plan.tab = b.dataset.tab; plan.edit = null; renderPlanFull();
@@ -1045,7 +1116,9 @@ textarea { resize: vertical; min-height: 70px; }
   $("#list").addEventListener("click", (e) => {
     const b = e.target.closest("[data-action]"); if (!b) return;
     const id = b.dataset.id;
-    if (b.dataset.action === "plan") openPlan(id);
+    if (b.dataset.action === "new") openTripForm(null);
+    else if (b.dataset.action === "show-examples") { hiddenEx.clear(); saveHidden(); render(); }
+    else if (b.dataset.action === "plan") openPlan(id);
     else if (b.dataset.action === "edit") openTripForm(id);
     else if (b.dataset.action === "delete") askDelete(id);
   });
